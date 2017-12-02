@@ -1,0 +1,82 @@
+WiFiMiniSolarCharger diary, project started 11 Nov 2017
+The concept is to make a small solar charge controller that fits on a plug-in circuit board the same size as the WeMos D1 mini pro.
+
+11 Nov 2017
+Schematic drawn in KiCad. 
+Cut out the circuit board, soldered in male and female header pins. 
+Soldered header pins to the DC-DC converter (micro MP2307 module). 
+Selected screw terminals
+Laid out circuit board in notebook. 
+
+12 Nov 2017
+TVS diode added to Schematic. 
+Completed hardware build - at least for Mark 1. 
+Now to write some software. It needs to initialise the used pins so I can check the hardware. 
+I realise I missed a Gate-Drain resistor for the IRF4905 MOSFETS. Having already installed a 100K resistor to the collector of the NPN transistor (Q3 in the schematic) I need about 1M from Gate to Source. When ON, this will give 10/11 of the batter voltage to turn on the MOSFETS, which is sufficient. 
+The input capacitance of the IRF4905 is 3400 pf, so with 2 in parallel the input capacitance is 6,800 pf so the turn-off time constant will be 10^6 * 6.8 * 10^-9 = 6.8 * 10^-3 seconds = 6.8 milli seconds. 
+This will happen only occasionally, so a slow turn-off time is OK. 
+If we wanted to use PWM we would need a different solution.
+ToDo:
+Add Gate-Drain Resistor to the schematic DONE
+Add Gate-Drain Resistor to the hardware DONE but see further notes below on 13 Nov
+
+Software plan and progress:
+Pin definition and connect class for on and off DONE
+Pin definition for sensing solar panel voltage 
+Class for measuring voltage on A0 and calibration
+Charger state variable and defining the necessary charging states and their transitions:
+ - OFF (when the charger starts, and when there is no solar panel voltage - disconnected).
+   also when disconnected because the battery voltage exceeded its current limit (float or boost)
+   and waiting for the battery voltage to fall below the reconnect limit.
+ - float (connected, waiting for battery voltage to exceed floatLimit)
+ - boost ((connected, waiting for battery voltage to exceed boostLimit)
+boostLimit applies during a maximum of boostDuration in each charging day (eg typically 1 hour)
+
+13 Nov 2017
+Reviewing the gate drive circuit for the MOSFETs, I realise I still have it wrong. I have now removed the 100 K resistor to the collector of the 2N3904, and made the Gate - Source resistor 100 K. I note that in the PWM V2 design done by Deba168, he uses a 10 K resistor in this position. With 100 K the time constant of the turn-off will be 0.68 ms. With 10 K it would be 0.68 ms. With 100 K the standing current when the controller is ON is about 12V/100K = 0.8 mA. With 10 K it would be 8 mA. I will stay with 100K for the moment at least. 
+The deba168 dessign uses IRF9540 MOSFET, which has a gate capacitance of 1400 pF, so his time constant is 10K * 1400 pF = 14,000 ns=14 us. Compared to my design with 100K * 6800 pF = 680,000 ns = 680 us = 0.68 ms. 
+The RdsON for the two MOSFETs different by a factor of 10: the IRF9540 is 200 milli Ohms at 25C, or double that (ie 400 milli Ohms) at 175 C. The IRF4905 is 20 milli Ohms at 25C, or double that (ie 40 milli Ohms) at 175 C. This means that the IRF9540 will be dissipating 1 Watt at a current of 1.6 Amps (175C), while the IRF4905 has 1 Watt dissipation at a current of 5 Amps. 
+
+I also note that the deba168 design has fuses and a temperature sensor for the battery. 
+My mini design does not have load control, so there is no load connection. I  doubt if the solar panel fuse is necessary. Solar panels can be short circuited with no damage. Temperature sensing would be a good feature to add, both for the battery (it would need a connector for an external temperature sensor. Also a sensor for the temperature of the IRF4905 would ba a good facility. This could be done with the Ds18B20 one-wire sensor. I will look at this as a later enhancement. I think there is enough room on the board for a DS18B20. 
+
+ToDo: study deba168 V2.0 software and see what value I can get, especially from the charge control logic.
+
+Made a start on a software plan. More details later.
+
+Today I found that when the hardware is fully assembled there was an oscillation. I tracked it to D3. Eventually I decided to connect the base of 2N3905 to D2 via a 10K resistor. I did this and it works. Iused a surface mount 10 K resistor, which was convenient even if a bit fiddly. 
+
+14 Nov 2017
+Drew up a software flow chart in my notebook. I will draw this up with libre office: ToDo
+Added to the charger.h object to check that the digitalRead works - it seems to work well, with a voltage threshold of about 10.5 volts, which is OK. 
+Created a new respository for this project on GitHub. 
+the total folder structure I am using looks like this:
+Projects
+-- projectName
+    -- private
+       -- folders for any info I need that does not need to be public (or under change control)
+    -- public 
+      -- projectName
+        -- diary // folder, contains this diary file and possibly other documentation
+        -- schematic // folder, contains KiCad project files, including the schematic 
+                     // and the component library cache
+                     // also a pdf file of the latest schematic printout
+        -- projectName.ino // main software file
+        -- projectSpecifiClass.h // file or files for classes which are specific to this project
+              // these projectSpecifiClass.h files contain the entire class software, including C++ code 
+        -- functions.ino  // project specific functions (these may or may not exist)
+
+1 Dec 2017
+I drew up the flow chart. Studying it I realise that the basis behavious it gives is that when the battery is hovering around the float or boost level, it alternates between On and Off states with a duration of Tcyce. This is a sort of PWM with a duty cycle of 50% and a period of 2 * Tcycle. 
+the reason it does this is that with the panel connected (ie ON state) the battery voltage rises a bit, and exceeds Vfloat or Vboost, which results in the OFF state. Then with the panel disconnected (ie Off state) the battery voltage falls a bit, and is below Vfloat or Vboost. So this results in the ON state. 
+Is this OK? 
+The fully charged terminal voltage of a 6-cell FLA battery is 12.6 volts with no current, subject to variation with temperature. 
+If Vfloat is set at or above this level, it will never sit permanently in the OFF state waiting for the voltage to fall but will continually alternate between OFF and ON states. 
+If Vfloat is set a bit lower, at (say) 12.4V, it represents about 60% full charge at rest. Under charge, the battery voltage will rise to 12.9V with a C/40 charge rate. Once the battery voltage in the Off state reaches 12.4V, it will stop charging completely, stuck at a 60% state of charge. 
+Witha PWM capability, the charger can reduce the rate of charge, and so get the battery to reach a specific float voltage (ideally 12.6V +- a bit for temperature) with a very low rate of charge.
+
+Hence the PWM capability will result in a more complete charge cycle and allow the battery to get to 100% charge reliably without significant overcharging. 
+
+To provide the PWM capability, the gate control circuit of the MOSFETs needs to be changed. I will draw this up as Version 2 (V2). 
+
+

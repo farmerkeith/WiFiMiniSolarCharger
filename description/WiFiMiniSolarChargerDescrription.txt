@@ -1,0 +1,72 @@
+The concept is to make a small solar charge controller that fits on a plug-in circuit board the same size as the WeMos D1 mini pro.
+
+I first thought it should be a simple on/off controller, but when I analysed the behaviour derived from the draft state machine I concluded that a PWM controller would be significantly preferable. The question is whether the extra components to support PWM can be fitted onto the mini-sized circuit board. 
+
+Allthough not absolutely essential, the controller should provide temperature sensing, with one sensor for the battery and another sensor close to the switching MOSFET. The battery temperature is used to adjust the float and boost voltage thresholds; and the MOSFET sensor is used to reduce the charging current if required. 
+
+Design steps
+Because of the size requirement, the charger must use a P-Channel MOSFET as the main switching element. The most cost-effective MOSFET I have found is the IRF4905, so I will base the design on that. 
+Another option that I have found is the SUP90P06-09L which has a lower Rds On (under 10 milliOhms at 25C and 19 milli Ohms at 175C) and a higher input capacitance. It is also less readily available and 2 to 4 times the price. So i will stick with the IRF4905 unless I find that unsatisfactory. 
+
+First I analyse the current carrying capacity of the IRF4905. Because we are using PWM and not a DC-DC buck converter, the switching period is not constrained by an inductor, so a relatively long switching period can be used. 
+
+I do not have any data to drive the selection of time periods. However I think the system cycle to check the existence of solar panel voltage, and where the battery voltage is relative to the various decision points, should be about 10 seconds. Much more than 10 seconds would mean that conditions (such as cloud cover) could change a lot; much less would be OK but might require extra power to be consumed by the control system (details to be determined). 
+
+Within the system cycle, the PWM period should be as long as practicable to minimise power overheads while allowing the On and Off periods to produce an average value, rather than two distinct On and Off conditions. The best result may emerge from later analysis, but I begin with 100 ms as a trial value. 
+
+The IRF4905 data sheet provides several data points for the ON resistance. The maximum Rds on is given as 20 milli Ohms at 25C with Vgs=-10V. Charts are provided for typical Ids and Vds over a range of Vgs, from which the typical Rds on for Vgs=-10V is 17 millis Ohms at 25C and 33 milli Ohms at 175C. I will use 33 milli Ohms as a design figure, expecting there will be a bit of margin most of the time. 
+
+With a thermal resistance of 62C per Watt, a maximum power dissipation of 1 Watt would result in a junction temperature of 100C for an ambient temperature of 38C. I will use this as a design point. There is no room on the circuit board for heat sinks, so we have to use the thermal poerformance with no heat sink. 
+
+With a power dissipation of 1 Watt and an Rds on of 33 milli Ohms, the maximum current allowed is I = sqrt(1/0.033) = 5.5 Amps. So we can say this charger can handle 5 Amps, which at 12 Volts means 60 Watts. The way solar panel ratings are normally quoted is the power at their maximum power point, which for a "12 volt" panel is 18 Volts. So this charger can handle the power from a 90 Watt, 12 Volt panel. 
+
+(Note: using the SUP90P06-09L would result in a current capacity of 7.25 amps for the equivalent conditions). 
+
+The next design point is to select a device to provide reverse current protection. This could be a diode or another P-Channel MOSFET. A diode such as MBR2045 could be used. It has a 20 Amp continuous rating, a maximum forward voltage drop of 0.64V at 10A and a thermal resistance of 25C/Watt. at 5 Amps it will dissipate 3.2 Watts and its temperature rise will be 3.2*25=80 C, giving a junction temperature of 118 C under the same conditions as for the MOSFET above. 
+
+Although probably feasible, this solution is only marginally acceptable, because of the high temperature and the high power loss. The high power loss is itself not much of a problem, because most of the time it is power that the panel will be capable of generating but not doing so, because the voltage is limited by the battery voltage. However the heat has to be disposed of and will make the other components, including the IRF4905 MOSFET, run hotter. 
+
+The high temperature could be overcome by using 2 MBR2045 diodes in parallel, This would not reduce the power loss, since the forward voltage drop is not very dependent on the current, but would distribute it across both compondents, allowing cooler operation. However all these components are in close proximity so mutual heating effects could still result in all of them running at well over 100 C. 
+
+Another solution is to use a second IRF4905 for reverse current protection. This MOSFET would have the same power dissipation as the switching MOSFET, but would be on all the time that the solar panel was producing power. So the total power loss for the 2 MOSFETs would be 2 Watts, which would allow the charger to run at a lower temperature than using diodes. So I will adopt this solution, even though it requires additional components for gate control. Hopefully they can be fitted onto the circuit board. 
+
+Total power dissipation
+At this point it is possible to get an idea of the total power dissipation of the charger as a whole. We have 1 Watt each for the 2 MOSFETS. The WeMos draws an average of about 80 mA, with peaks of up to 170 mA. 80 mA at 3.3V is a power of 264 mW. 
+
+The 3.3V supply will be generated by a mini-sized switching DC-DC converter, which may have an efficiency of around 80%, so the WeMos plus converter will use 264/0.8 = 330 mW. 
+
+The gate drive circuit has to charge and discharge the gate capacitance of the PWM IRF4905 once every PWM period. The total input capacitance is given in the data sheet as 3,400 pF, which is a good enough value to use for the power estimation. 
+
+When ON the IRF4905 gate to source voltage will be the battery voltage, nominally 12 V but can be as much as 14V when in boost mode. So we should use 14 Volts as the design point. When Off, the gate to source voltage will be 0 V. Hence, in every PWM cycle we charge and discharge 3,400 pF by 14 Volts. The amount of charge is C*V which is 3,400 * 14 = 47,600 pico Coulombs or 47.6 nano Coulombs. The energy in that charge is 1/2 C V^2 = 0.33 micro Joules, and since we have to put it in and take it out again in every PWM cycle, the energy per PWM cycle is 0.67 micro Joules. With a PWM cycle of 100 ms, we have 10 cycles per second so the energy used is 6.7 micro Watts. So this energy consumption is insignificant. 
+
+(Note: if the PWM period was 10 microseconds that would be 100,000 per second and the gate power would be 0.67 * 100,000 microWatts = 67 milli Watts.)
+
+So far the total power dissipation in the controller is 2.33 Watts. The gate driver will add something to that. We should aim for something that does not add too much to the total power, so perhaps 170 mW would be a good figure, to bring our total up to 2.5 Watts. That will give us 0.5 Watts as a fixed part that does not vary with charger current, and 2 watts that is a function of current. This will allow us to draw an efficiency curve. At maximum current, 5 Amps, the power loss is 2.5 Watts for a delivered power of 60 Watts (ie 2.5/60*100=4.17%). At 1 Amp, the power loss is 0.9 Watts for a delivered power of 12 Watts (ie 0.9/12*100=7.5%). And so on.  
+
+Gate driver
+Using our trial value of PWM period of 100 ms, and an allowable energy loss attributable to switching, we can calculate a required transition time for switching that we  use to design the driver. We have already assumed that all of the allowable dissipation in the IRF4905 will be allocated to resistive loss esp8266 pin current limit- ie 1 Watt. So we need to keep the switching loss to a level that is insignificant compared to 1 Watt. Provisionally, I will aim for less than 1%, that is, 10 milliWatts. 
+
+During the switching transitions, the (short term) power dissipated in the switching MOSFET is 1/2 * V * I, where I is the current when the MOSFET is ON and V is the voltage difference when the MOSFET is OFF. In our design, I is just the charger current (max 5 amps). V is the difference between the open circuit voltage of the panel, and the battery voltage. So for us using a "12 Volt" panel with 36 cells and an open circuit voltage of 36*0.7=25.2 Volts, V in this equation is (25.2-12)=13.2 Volts. So the power being absorbed by the IRF4905 during the switching transitions is 1/2 * 5 * 13.2 = 33 Watts. 
+
+In order for a short term power of 33 Watts to have an average value of 10 milli Watts, it needs to be happening with a duty cycle that is less than 1 event in 33,000 / 10, that is 1 in 3,300. So if the PWM period is 100 ms, the sum of the ON and OFF switching times has to be less than 100 ms/3,300, which is 30 microseconds. So this is the requirement on the PWM driver, the sum of the On switching time and Off switching time has to be less than 30 microseconds. 
+
+Now for the detailed design of the gate drive circuit. A PWM signal will be generated by the ESP8266 on the WeMos board. It will be a rectangular waveform from 0 to 3.3 Volts. The ESP8266 pins are capable of up to 12 mA, so the input impedance of the drive circuit can be as low as 3.3/12=0.275K (275 Ohms). 
+(At this current level, the input of the drive circuit would be dissipating 3.3V * 12mA = 40 mW, which would be rather excessive.)
+
+There are two options for a basic MOSFET drive circuit: active pull up and pull down; and active pull down with passive pull up. The latter is simpler but the pull up is much slower than the pull down. I will analyse both types. 
+
+Active pull down and passive pull up circuit. Since the pull up will be much slower than the pull down, we can allocate the majority of the 30 microsecond allowance to the pull up - say 29 us for pull up and 1 us for pull down. 
+
+First the pull up part. In the pull up phase of the cycle, the MOSFET gate has to go from the point where it is just starting to add significant voltage to the current path, to the point where it has the full voltage across it. For the IRF4905 the first of these is at a gate voltage of about -7 V relative to source; and the second is very close to the threshold voltage which is about -3V. Thus we have to change the gate voltage by 4 volts. We can use the capacitance equation Q = CV = It to find the required current I. Since we know t (29 us), C (3400 pF) and V (4V) we can work out I which is 3400 * 4 / 29 = 468 (10^-12/10^-6 Amps) = 468 micro Amps = 0.47 milli Amps. 
+
+If we work on the average voltage during this transition as 5 Volts, then to get 0.47 milli Amps with 5 Volts we should have a resistor of R=5/0.47 = 10 K Ohms. Because of all the approximations in the way we got to that answer, we should put in some margin, so use a resistor of 4.7 K, which even at 3 volts will give us 3/4.7=0.63 milli Amps, and so should easily achieve the 29 us target. This 4.7 K resistor will have either 0 volts across it (when the MOSFET is Off) or 12-14 volts across it (when the MOSFET is On). With 14 volts, it will draw 14/4.7=3 mA and dissipate 14*3=42 milli Watts. This will be the major component of the power dissipation of the MOSFET driver.
+
+Now we can design the pull down part of the MOSFET driver. We can use a general purpose NPN transistor such as the 2N3905 for the active pull down. The task is to change the MOSFET gate voltage from -3V to -7 V in no more than 1 microsecond. As for the pull up case, we can calculate the required current, which is 3400 * 4 / 1 = 13,600 microamps = 13.6 milliamps. In addition we have to carry the current drawn by the pull up resistor, which will be less than 1 milliamp during the critical phase of the pull down. So our transistor needs to pull down with about 15 mA. 
+The 2N3905 has a typical small signal current gain of 300, but when dealing with high currents its gain falls to about 30. Therefore we should provide the 2N3904 transistor with 15/30=0.5 mA of base current. 
+That base current comes from the ESP8266 pin which is at 3.3V, to the base which will be at about 0.8 V. So we need a base resistor no more than 2.5V/0.5 mA = 5K. So a base resistor of 4.7 K should be OK, or we can go to a slightly lower value such as 3.3K which will give us a bit more margin with a base current of 2.5/3.3=0.75 mA. The power dissipation in this resistor when on will be 2.5*0.75=1.9 mW. 
+
+Overall this passive pull up, active pull down driver circuit uses 1 transistor and 2 resistors, draws about 4 mA and dissipates 44 mW and achieves the 30 micro second switching time with a modest marging. 
+
+Now we look at an alternative design that has active pull up as well as active pull down. It will use an additional NPN transistor and a diode as well as the components in the passive pull up design. With this design we can easily achieve 1 microsecond times for both pull up and pull down, giving us the flexibility for a shorter PWM period if needed, as well as reduced power consumption and heat dissipation. 
+
+To achieve pull up in 1 microsecond, the current needs to be 14 mA (as for the pull down above). This requires a base current of 0.5 mA, and a pull up resistor of 10 K ohms. 
